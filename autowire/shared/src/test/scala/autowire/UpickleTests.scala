@@ -1,11 +1,8 @@
 package autowire
 import utest._
-import utest.framework._
 import utest.framework.ExecutionContext.RunNow
 import upickle.Js
 import upickle.default._
-import acyclic.file
-
 
 object UpickleTests extends TestSuite{
   object Bundle extends GenericClientServerBundle[String, upickle.default.Reader, upickle.default.Writer]{
@@ -19,8 +16,6 @@ object UpickleTests extends TestSuite{
 
   val tests = TestSuite{
     'example{
-      import upickle._
-
       // shared API interface
       trait MyApi{
         def doThing(i: Int, s: String): Seq[String]
@@ -31,16 +26,16 @@ object UpickleTests extends TestSuite{
         def doThing(i: Int, s: String) = Seq.fill(i)(s)
       }
       object MyServer extends autowire.Server[String, upickle.default.Reader, upickle.default.Writer]{
-        def write[Result: Writer](r: Result) = upickle.default.write(r)
-        def read[Result: Reader](p: String) = upickle.default.read[Result](p)
+        def write[MyResult: Writer](r: MyResult) = upickle.default.write(r)
+        def read[MyResult: Reader](p: String) = upickle.default.read[MyResult](p)
 
         val routes = MyServer.route[MyApi](MyApiImpl)
       }
 
       // client-side implementation, and call-site
       object MyClient extends autowire.Client[String, upickle.default.Reader, upickle.default.Writer]{
-        def write[Result: Writer](r: Result) = upickle.default.write(r)
-        def read[Result: Reader](p: String) = upickle.default.read[Result](p)
+        def write[MyResult: Writer](r: MyResult) = upickle.default.write(r)
+        def read[MyResult: Reader](p: String) = upickle.default.read[MyResult](p)
 
         override def doCall(req: Request) = {
           println(req)
@@ -51,7 +46,6 @@ object UpickleTests extends TestSuite{
       MyClient[MyApi].doThing(3, "lol").call().foreach(println)
     }
     'inheritedTraits{
-      import upickle._
 
       // It should also be possible to separate the API into several controllers that
       // only implement the logic of their corresponding protocols. The controllers are
@@ -80,15 +74,15 @@ object UpickleTests extends TestSuite{
         with ArticleController
 
       object MyServer extends autowire.Server[String, upickle.default.Reader, upickle.default.Writer]{
-        def write[Result: Writer](r: Result) = upickle.default.write(r)
-        def read[Result: Reader](p: String) = upickle.default.read[Result](p)
+        def write[MyResult: Writer](r: MyResult) = upickle.default.write(r)
+        def read[MyResult: Reader](p: String) = upickle.default.read[MyResult](p)
 
         val routes = MyServer.route[Protocol](Controller)
       }
 
       object MyClient extends autowire.Client[String, upickle.default.Reader, upickle.default.Writer]{
-        def write[Result: Writer](r: Result) = upickle.default.write(r)
-        def read[Result: Reader](p: String) = upickle.default.read[Result](p)
+        def write[MyResult: Writer](r: MyResult) = upickle.default.write(r)
+        def read[MyResult: Reader](p: String) = upickle.default.read[MyResult](p)
 
         override def doCall(req: Request) = {
           println(req)
@@ -157,6 +151,7 @@ object UpickleTests extends TestSuite{
         assert(!Server.routes.isDefinedAt(badRequest))
         intercept[MatchError] {
           Server.routes(badRequest)
+          ()
         }
       }
       'inputError{
@@ -166,7 +161,10 @@ object UpickleTests extends TestSuite{
             input
           )
           assert(Server.routes.isDefinedAt(badRequest))
-          val error = intercept[Error] { Server.routes(badRequest) }
+          val error = intercept[Error] {
+            Server.routes(badRequest)
+            ()
+          }
           assert(expectedError.isDefinedAt(error))
         }
 
@@ -253,8 +251,8 @@ object UpickleTests extends TestSuite{
       }
 
       object MyServer extends autowire.Server[String, upickle.default.Reader, upickle.default.Writer]{
-        def write[Result: Writer](r: Result) = upickle.default.write(r)
-        def read[Result: Reader](p: String) = upickle.default.read[Result](p)
+        def write[MyResult: Writer](r: MyResult) = upickle.default.write(r)
+        def read[MyResult: Reader](p: String) = upickle.default.read[MyResult](p)
 
         val routes1 = MyServer.route[MyApi](new MyOtherApiImpl(42))
 
@@ -265,8 +263,8 @@ object UpickleTests extends TestSuite{
         val routes3 = MyServer.route[MyApi](anApiDef(2))
       }
       class UpickleClient(pf: PartialFunction[MyServer.Request, concurrent.Future[String]]) extends autowire.Client[String, upickle.default.Reader, upickle.default.Writer]{
-        def write[Result: Writer](r: Result) = upickle.default.write(r)
-        def read[Result: Reader](p: String) = upickle.default.read[Result](p)
+        def write[MyResult: Writer](r: MyResult) = upickle.default.write(r)
+        def read[MyResult: Reader](p: String) = upickle.default.read[MyResult](p)
         def doCall(req: Request) = pf(req)
       }
       object Client1 extends UpickleClient(MyServer.routes1)

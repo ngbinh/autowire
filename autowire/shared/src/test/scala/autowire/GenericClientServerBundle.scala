@@ -1,5 +1,4 @@
 package autowire
-import acyclic.file
 import scala.concurrent.Future
 
 /**

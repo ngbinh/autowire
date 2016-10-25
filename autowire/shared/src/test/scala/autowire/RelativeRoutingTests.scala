@@ -1,12 +1,8 @@
 package autowire
 
-import java.io.File
 import utest._
-import utest.framework._
-import utest.framework.ExecutionContext.RunNow
 import upickle.default._
-import acyclic.file
-
+import utest.framework.ExecutionContext.RunNow
 
 object RelativeRoutingTests extends TestSuite {
  import utest.PlatformShims.await
@@ -15,8 +11,6 @@ object RelativeRoutingTests extends TestSuite {
 
   val tests = TestSuite {
     'example {
-      import upickle._
-
       // shared API interface
       trait MagicalApi {
         def resetGame(): Seq[String]
@@ -45,8 +39,8 @@ object RelativeRoutingTests extends TestSuite {
 
 
       trait UPickleSerializers extends Serializers[String, upickle.default.Reader, upickle.default.Writer] {
-        override def write[Result: Writer](r: Result) = upickle.default.write(r)
-        override def read[Result: Reader](p: String) = upickle.default.read[Result](p)
+        override def write[WResult: Writer](r: WResult) = upickle.default.write(r)
+        override def read[RResult: Reader](p: String) = upickle.default.read[RResult](p)
       }
 
       object UPickleServer extends autowire.Server[String, upickle.default.Reader, upickle.default.Writer] with UPickleSerializers

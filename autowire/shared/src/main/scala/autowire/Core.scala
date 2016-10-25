@@ -1,7 +1,6 @@
 package autowire
 
 import scala.concurrent.Future
-import acyclic.file
 
 object Core {
   /**

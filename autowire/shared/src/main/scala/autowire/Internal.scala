@@ -16,7 +16,7 @@ object Internal{
    * call-Future extension method a chance to run first
    */
   trait LowPri {
-    implicit def clientCallable[T](t: T) = new Internal.ClientCallable[T]
+    implicit def clientCallable[T](t: T): Internal.ClientCallable[T] = new Internal.ClientCallable[T]
   }
 
   /**

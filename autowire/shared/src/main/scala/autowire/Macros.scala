@@ -1,11 +1,9 @@
 package autowire
 
 import scala.concurrent.Future
-import scala.reflect.macros.Context
-import language.experimental.macros
-import acyclic.file
-
 import Core._
+
+import scala.reflect.macros.blackbox
 
 object Macros {
 
@@ -26,17 +24,19 @@ object Macros {
     def withFilter(f: T => Boolean) = if (f(t)) this else Luz(s)
   }
 
-
-  class MacroHelp[C <: Context](val c: C) {
+  class MacroHelp[C <: blackbox.Context](val c: C) {
     import c.universe._
     def futurize(t: Tree, member: MethodSymbol) = {
       if (member.returnType <:< c.typeOf[Future[_]]) t
       else q"scala.concurrent.Future.successful($t)"
     }
 
-    def getValsOrMeths(curCls: Type): Iterable[Either[(c.Symbol, MethodSymbol), (c.Symbol, MethodSymbol)]] = {
-      def isAMemberOfAnyRef(member: Symbol) = weakTypeOf[AnyRef].members.exists(_.name == member.name)
-      val membersOfBaseAndParents: Iterable[Symbol] = curCls.declarations ++ curCls.baseClasses.map(_.asClass.toType.declarations).flatten
+    def getValsOrMeths(curCls: Type): Iterable[
+      Either[(c.Symbol, MethodSymbol), (c.Symbol, MethodSymbol)]] = {
+      def isAMemberOfAnyRef(member: Symbol) =
+        weakTypeOf[AnyRef].members.exists(_.name == member.name)
+      val membersOfBaseAndParents: Iterable[Symbol] = curCls.decls ++ curCls.baseClasses
+          .flatMap(_.asClass.toType.decls)
       val extractableMembers = for {
         member <- membersOfBaseAndParents
         if !isAMemberOfAnyRef(member)
@@ -49,27 +49,27 @@ object Macros {
         member -> memTerm.asMethod
       }
 
-      extractableMembers flatMap { case (member, memTerm) =>
-        if (memTerm.isGetter) {
-          //This is a val (or a var-getter) so we will need to recur here
-          Seq(Left(member -> memTerm))
-        } else if (memTerm.isSetter || memTerm.isConstructor) {
-          //Ignore setters and constructors
-          Nil
-        } else {
-          Seq(Right(member -> memTerm))
-        }
+      extractableMembers flatMap {
+        case (member, memTerm) =>
+          if (memTerm.isGetter) {
+            //This is a val (or a var-getter) so we will need to recur here
+            Seq(Left(member -> memTerm))
+          } else if (memTerm.isSetter || memTerm.isConstructor) {
+            //Ignore setters and constructors
+            Nil
+          } else {
+            Seq(Right(member -> memTerm))
+          }
       }
     }
 
-    def extractMethod(
-      pickleType: WeakTypeTag[_],
-      meth: MethodSymbol,
-      prefixPath: Seq[String],
-      memPath: Seq[String],
-      target: Expr[Any],
-      curCls: c.universe.Type): c.universe.Tree = {
-      val flattenedArgLists = meth.paramss.flatten
+    def extractMethod(pickleType: WeakTypeTag[_],
+                      meth: MethodSymbol,
+                      prefixPath: Seq[String],
+                      memPath: Seq[String],
+                      target: Expr[Any],
+                      curCls: c.universe.Type): c.universe.Tree = {
+      val flattenedArgLists = meth.paramLists.flatten
       def hasDefault(i: Int) = {
         val defaultName = s"${meth.name}$$default$$${i + 1}"
         if (curCls.members.exists(_.name.toString == defaultName)) {
@@ -78,13 +78,16 @@ object Macros {
           None
         }
       }
-      val argName = c.fresh[TermName]("args")
-      val args: Seq[Tree] = flattenedArgLists.zipWithIndex.map { case (arg, i) =>
-        val default = hasDefault(i) match {
-          case Some(defaultName) => q"scala.util.Right(($target).${newTermName(defaultName)})"
-          case None => q"scala.util.Left(autowire.Error.Param.Missing(${arg.name.toString}))"
-        }
-        q"""autowire.Internal.read[$pickleType, ${arg.typeSignature}](
+      val argName = TermName("args")
+      val args: Seq[Tree] = flattenedArgLists.zipWithIndex.map {
+        case (arg, i) =>
+          val default = hasDefault(i) match {
+            case Some(defaultName) =>
+              q"scala.util.Right(($target).${TermName(defaultName)})"
+            case None =>
+              q"scala.util.Left(autowire.Error.Param.Missing(${arg.name.toString}))"
+          }
+          q"""autowire.Internal.read[$pickleType, ${arg.typeSignature}](
                  $argName,
                  $default,
                  ${arg.name.toString},
@@ -93,22 +96,21 @@ object Macros {
              """
       }
 
-
       //val memSel = c.universe.newTermName(memPath.mkString("."))
 
       val bindings = args.foldLeft[Tree](q"Nil") { (old, next) =>
         q"$next :: $old"
       }
 
-      val nameNames: Seq[TermName] = flattenedArgLists.map(x => x.name.toTermName)
-      val assignment = flattenedArgLists.foldLeft[Tree](q"Nil") { (old, next) =>
-        pq"scala.::(${next.name.toTermName}: ${next.typeSignature} @unchecked, $old)"
+      val nameNames: Seq[TermName] =
+        flattenedArgLists.map(x => x.name.toTermName)
+      val assignment = flattenedArgLists.foldLeft[Tree](q"Nil") {
+        (old, next) =>
+          pq"scala.::(${next.name.toTermName}: ${next.typeSignature} @unchecked, $old)"
       }
 
-
-
       val memSel = memPath.foldLeft(q"($target)") { (cur, nex) =>
-        q"$cur.${c.universe.newTermName(nex)}"
+        q"$cur.${c.universe.TermName(nex)}"
       }
 
       val futurized = futurize(q"$memSel(..$nameNames)", meth)
@@ -124,32 +126,39 @@ object Macros {
     }
 
     def getAllRoutesForClass(
-      pt: WeakTypeTag[_],
-      target: Expr[Any],
-      curCls: Type,
-      prefixPath: Seq[String],
-      memPath: Seq[String]): Iterable[c.universe.Tree] = {
+        pt: WeakTypeTag[_],
+        target: Expr[Any],
+        curCls: Type,
+        prefixPath: Seq[String],
+        memPath: Seq[String]): Iterable[c.universe.Tree] = {
       //See http://stackoverflow.com/questions/15786917/cant-get-inherited-vals-with-scala-reflection
       //Yep case law to program WUNDERBAR!
       getValsOrMeths(curCls).flatMap {
-        case Left((m, t)) => Nil
+        case Left((m, t)) =>
+          Nil
           //Vals / Vars
-          getAllRoutesForClass(pt, target, m.typeSignature, prefixPath, memPath :+ m.name.toString)
+          getAllRoutesForClass(pt,
+                               target,
+                               m.typeSignature,
+                               prefixPath,
+                               memPath :+ m.name.toString)
         case Right((m, t)) =>
           //Methods
-          Seq(extractMethod(pt, t, prefixPath, memPath :+ m.name.toString, target, curCls))
+          Seq(
+            extractMethod(pt,
+                          t,
+                          prefixPath,
+                          memPath :+ m.name.toString,
+                          target,
+                          curCls))
 
       }
     }
 
   }
 
-
-  def clientMacro[Result]
-                 (c: Context)
-                 ()
-                 (implicit r: c.WeakTypeTag[Result])
-                 : c.Expr[Future[Result]] = {
+  def clientMacro[Result](c: blackbox.Context)()(
+      implicit r: c.WeakTypeTag[Result]): c.Expr[Future[Result]] = {
 
     import c.universe._
     object Pkg {
@@ -159,39 +168,46 @@ object Macros {
       }
     }
     val res = for {
-      q"${Pkg(_)}.`package`.$callableName[$t]($contents)" <- Win(c.prefix.tree,
-        "You can only use .call() on the Proxy returned by autowire.Client.apply, not " + c.prefix.tree
-      )
-      if Seq("clientFutureCallable", "clientCallable").contains(callableName.toString)
+      q"${ Pkg(_) }.`package`.$callableName[$t]($contents)" <- Win(
+        c.prefix.tree,
+        "You can only use .call() on the Proxy returned by autowire.Client.apply, not " + c.prefix.tree)
+      if Seq("clientFutureCallable", "clientCallable").contains(
+        callableName.toString)
       // If the tree is one of those default-argument containing blocks or
       // functions, pry it apart such that the main logic can operate on the
       // inner tree, and leave instructions on how
-      (unwrapTree: Tree, methodName: TermName, args: Seq[Tree], prelude: Seq[Tree], deadNames: Seq[String]@unchecked) = (contents: Tree) match {
-        case x@q"$unwrapTree.$methodName(..$args)" =>
+      (unwrapTree: Tree,
+       methodName: TermName,
+       args: Seq[Tree],
+       prelude: Seq[Tree],
+       deadNames: Seq[String] @unchecked) = (contents: Tree) match {
+        case x @ q"$unwrapTree.$methodName(..$args)" =>
           //Normal tree
           (unwrapTree, methodName, args, Nil, Nil)
-        case t@q"..${statements: List[ValDef]@unchecked}; $thing.$call(..$args)"
-          if statements.forall(_.isInstanceOf[ValDef]) =>
+        case t @ q"..${ statements: List[ValDef] @unchecked }; $thing.$call(..$args)"
+            if statements.forall(_.isInstanceOf[ValDef]) =>
           //Default argument tree
-
 
           val (liveStmts, deadStmts) = statements.tail.partition {
             case ValDef(mod, _, _, Select(singleton, name))
-              if name.toString.contains("$default") => false
+                if name.toString.contains("$default") =>
+              false
             case _ => true
           }
           val ValDef(_, _, _, rhs) = statements.head
 
           (rhs, call, args, liveStmts, deadStmts.map(_.name))
         case x =>
-          c.abort(x.pos, s"You can't call the .call() method on $x, only on autowired function calls.")
+          c.abort(
+            x.pos,
+            s"You can't call the .call() method on $x, only on autowired function calls.")
       }
 
       (oTree, memPath) = {
         def getMempath(tree: Tree, path: List[String]): (Tree, List[String]) = {
           tree match {
-            case Select(t, n) =>
-              getMempath(t, n.toTermName.toString :: path)
+            case Select(q, n) =>
+              getMempath(q, n.toTermName.toString :: path)
             case _ =>
               tree -> path
           }
@@ -200,41 +216,44 @@ object Macros {
         getMempath(unwrapTree, List(methodName.toString))
       }
 
-      q"${Pkg(_)}.`package`.unwrapClientProxy[$trt, $pt, $rb, $wb]($proxy)" <- Win(oTree,
-        s"XX You can't call the .call() method on $contents, only on autowired function calls"
-      )
+      q"${ Pkg(_) }.`package`.unwrapClientProxy[$trt, $pt, $rb, $wb]($proxy)" <- Win(
+        oTree,
+        s"XX You can't call the .call() method on $contents, only on autowired function calls")
 
       trtTpe: Type = trt.tpe
 
-      prePath =
-      trtTpe
-        .widen
-        .typeSymbol
-        .fullName
-        .toString
-        .split('.')
-        .toSeq
+      prePath = trtTpe.widen.typeSymbol.fullName.toString.split('.').toSeq
 
       method = {
         // Look for method in the trait and in its base classes.
         def findMember(tpe: Type, name: TermName): Option[Symbol] = {
-          (Iterator.single(tpe.declaration(name)) ++
-            tpe.baseClasses.iterator.map(_.asClass.toType.declaration(name)))
+          (Iterator.single(tpe.decl(name)) ++
+            tpe.baseClasses.iterator.map(_.asClass.toType.decl(name)))
             .find(_ != NoSymbol)
         }
 
-        def loop(path: List[String], tpe: Type, lastMem: Option[Symbol]): MethodSymbol = {
+        def loop(path: List[String],
+                 tpe: Type,
+                 lastMem: Option[Symbol]): MethodSymbol = {
           path match {
             case Nil =>
               lastMem match {
                 case Some(mem) if mem.isMethod => mem.asMethod
-                case Some(mem) => c.abort(c.enclosingPosition, s"Error while creating route proxy, expect method, $mem in $tpe")
-                case None => c.abort(c.enclosingPosition, s"Error while creating route proxy, expect missing member in $tpe")
+                case Some(mem) =>
+                  c.abort(
+                    c.enclosingPosition,
+                    s"Error while creating route proxy, expect method, $mem in $tpe")
+                case None =>
+                  c.abort(
+                    c.enclosingPosition,
+                    s"Error while creating route proxy, expect missing member in $tpe")
               }
             case name :: rem =>
-              findMember(tpe, newTermName(name)) match {
+              findMember(tpe, TermName(name)) match {
                 case None =>
-                  c.abort(c.enclosingPosition, s"Error while creating route proxy, unable to find $name in $tpe")
+                  c.abort(
+                    c.enclosingPosition,
+                    s"Error while creating route proxy, unable to find $name in $tpe")
                 case Some(mem) =>
                   val memTpe = mem.typeSignature.widen
                   loop(rem, memTpe, Some(mem))
@@ -246,13 +265,17 @@ object Macros {
       }
 
       pickled = args
-        .zip(method.paramss.flatten)
+        .zip(method.paramLists.flatten)
         .filter {
-        case (Ident(name: TermName), _) => !deadNames.contains(name)
-        case (q"$thing.$name", _) if name.toString.contains("$default$") => false
-        case _ => true
-      }
-        .map { case (t, param: Symbol) => q"${param.name.toString} -> $proxy.self.write($t)"}
+          case (Ident(name: TermName), _) => !deadNames.contains(name)
+          case (q"$thing.$name", _) if name.toString.contains("$default$") =>
+            false
+          case _ => true
+        }
+        .map {
+          case (t, param: Symbol) =>
+            q"${param.name.toString} -> $proxy.self.write($t)"
+        }
 
     } yield {
       val fullPath = prePath ++ memPath
@@ -270,21 +293,25 @@ object Macros {
     }
   }
 
-  def routeMacro[Trait, PickleType]
-                (c: Context)
-                (target: c.Expr[Trait])
-                (implicit t: c.WeakTypeTag[Trait], pt: c.WeakTypeTag[PickleType])
-                : c.Expr[Router[PickleType]] = {
+  def routeMacro[Trait, PickleType](c: blackbox.Context)(
+      target: c.Expr[Trait])(
+      implicit t: c.WeakTypeTag[Trait],
+      pt: c.WeakTypeTag[PickleType]): c.Expr[Router[PickleType]] = {
     import c.universe._
     val help = new MacroHelp[c.type](c)
     val topClass = weakTypeOf[Trait]
-    val routes = help.getAllRoutesForClass(pt, target, topClass, topClass.typeSymbol.fullName.toString.split('.').toSeq, Nil).toList
+    val routes = help
+      .getAllRoutesForClass(
+        pt,
+        target,
+        topClass,
+        topClass.typeSymbol.fullName.toString.split('.').toSeq,
+        Nil)
+      .toList
 
     val res = q"{case ..$routes}: autowire.Core.Router[$pt]"
     //    println("RES", res)
     c.Expr(res)
   }
 
-
 }
-

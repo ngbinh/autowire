@@ -1,16 +1,13 @@
 package autowire
 import utest._
-import scala.concurrent.Future
-import java.io.{ObjectInputStream, ByteArrayInputStream, ObjectOutputStream, ByteArrayOutputStream}
-import utest.framework.Tree
-import utest.framework.Test
+import java.io.{ByteArrayInputStream, ByteArrayOutputStream, ObjectInputStream, ObjectOutputStream}
+
 import utest.framework.ExecutionContext.RunNow
+
 import scala.reflect.ClassTag
 import utest._
-import scala.pickling._
-import json._
 import org.objenesis.strategy.StdInstantiatorStrategy
-
+import play.api.libs.json.{Json, Reads, Writes}
 
 object InteropTests extends TestSuite{
   import utest.PlatformShims.await
@@ -34,14 +31,13 @@ object InteropTests extends TestSuite{
         }
         def routes = Server.route[Api](Controller)
       }
-      import Bundle.{Client, Server}
 
-      val res1 = await(Client[Api].add(1, 2, 3).call())
-      val res2 = await(Client[Api].add(1).call())
-      val res3 = await(Client[Api].add(1, 2).call())
-      val res4 = await(Client[Api].multiply(x = 1.2, Seq(2.3)).call())
-      val res5 = await(Client[Api].multiply(x = 1.1, ys = Seq(2.2, 3.3, 4.4)).call())
-      val res6 = await(Client[Api].sum(Point(1, 2), Point(10, 20)).call())
+      val res1 = await(Bundle.Client[Api].add(1, 2, 3).call())
+      val res2 = await(Bundle.Client[Api].add(1).call())
+      val res3 = await(Bundle.Client[Api].add(1, 2).call())
+      val res4 = await(Bundle.Client[Api].multiply(x = 1.2, Seq(2.3)).call())
+      val res5 = await(Bundle.Client[Api].multiply(x = 1.1, ys = Seq(2.2, 3.3, 4.4)).call())
+      val res6 = await(Bundle.Client[Api].sum(Point(1, 2), Point(10, 20)).call())
       assert(
         res1 == "1+2+3",
         res2 == "1+2+10",
@@ -70,15 +66,14 @@ object InteropTests extends TestSuite{
         }
         def routes = Server.route[Api](Controller)
       }
-      import Bundle.{Client, Server}
 
-      val res1 = await(Client[Api].add(1, 2, 3).call())
-      val res2 = await(Client[Api].add(1).call())
-      val res3 = await(Client[Api].add(1, 2).call())
+      val res1 = await(Bundle.Client[Api].add(1, 2, 3).call())
+      val res2 = await(Bundle.Client[Api].add(1).call())
+      val res3 = await(Bundle.Client[Api].add(1, 2).call())
 
-      val res4 = await(Client[Api].multiply(x = 1.2, Seq(2.3)).call())
-      val res5 = await(Client[Api].multiply(x = 1.1, ys = Seq(2.2, 3.3, 4.4)).call())
-      val res6 = await(Client[Api].sum(Point(1, 2), Point(10, 20)).call())
+      val res4 = await(Bundle.Client[Api].multiply(x = 1.2, Seq(2.3)).call())
+      val res5 = await(Bundle.Client[Api].multiply(x = 1.1, ys = Seq(2.2, 3.3, 4.4)).call())
+      val res6 = await(Bundle.Client[Api].sum(Point(1, 2), Point(10, 20)).call())
       assert(
         res1 == "1+2+3",
         res2 == "1+2+10",
@@ -91,7 +86,6 @@ object InteropTests extends TestSuite{
     }
 
     'playJson{
-      import play.api.libs.json._
       implicit val pointReads = Json.reads[Point]
       implicit val pointWrites = Json.writes[Point]
       object Bundle extends GenericClientServerBundle[String, Reads, Writes]{
@@ -104,15 +98,14 @@ object InteropTests extends TestSuite{
         }
         def routes = Server.route[Api](Controller)
       }
-      import Bundle.{Client, Server}
 
-      val res1 = await(Client[Api].add(1, 2, 3).call())
-      val res2 = await(Client[Api].add(1).call())
-      val res3 = await(Client[Api].add(1, 2).call())
+      val res1 = await(Bundle.Client[Api].add(1, 2, 3).call())
+      val res2 = await(Bundle.Client[Api].add(1).call())
+      val res3 = await(Bundle.Client[Api].add(1, 2).call())
 
-      val res4 = await(Client[Api].multiply(x = 1.2, Seq(2.3)).call())
-      val res5 = await(Client[Api].multiply(x = 1.1, ys = Seq(2.2, 3.3, 4.4)).call())
-      val res6 = await(Client[Api].sum(Point(1, 2), Point(10, 20)).call())
+      val res4 = await(Bundle.Client[Api].multiply(x = 1.2, Seq(2.3)).call())
+      val res5 = await(Bundle.Client[Api].multiply(x = 1.1, ys = Seq(2.2, 3.3, 4.4)).call())
+      val res6 = await(Bundle.Client[Api].sum(Point(1, 2), Point(10, 20)).call())
       assert(
         res1 == "1+2+3",
         res2 == "1+2+10",
